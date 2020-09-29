@@ -1,3 +1,0 @@
-C:/Users/79017/Documents/Work/MIPT/1 semester/Stack/cmake-build-debug/CMakeFiles/Stack.dir
-C:/Users/79017/Documents/Work/MIPT/1 semester/Stack/cmake-build-debug/CMakeFiles/edit_cache.dir
-C:/Users/79017/Documents/Work/MIPT/1 semester/Stack/cmake-build-debug/CMakeFiles/rebuild_cache.dir
