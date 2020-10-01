@@ -40,4 +40,4 @@ bool stack_ok(Stack *stack);
  */
 void stack_delete(Stack *stack);
 
-#endif //STACK_H
+#endif /* STACK_H */
