@@ -1,15 +1,16 @@
-#include "Stack.h"
+#include "stack.h"
+
+#include "error.h"
+#include "memory_alloc.h"
 
 #include <assert.h>
 #include <stdlib.h>
 
 const size_t CONSTRUCTION_CAPACITY = 32;
-
 const size_t GROW_COEFFICIENT = 2;
 
 struct Stack {
     val_t *data;
-
     size_t size;
     size_t capacity;
 };
@@ -19,6 +20,7 @@ Stack *stack_construct()
     Stack *stack = (Stack *) calloc(1, sizeof(Stack));
 
     if (stack == NULL) {
+        ERROR_OCCURRED_CALLING(calloc, "returned NULL");
         return NULL;
     }
 
@@ -38,6 +40,7 @@ int stack_grow(Stack *stack)
     val_t *tmp = (val_t *) realloc(stack->data, new_capacity * sizeof(val_t));
 
     if (tmp == NULL) {
+        ERROR_OCCURRED_CALLING(realloc, "returned NULL");
         return 1;
     }
 
@@ -57,7 +60,7 @@ int stack_push(Stack *stack, val_t val)
     }
 
     if (stack_grow(stack)) {
-
+        ERROR_OCCURRED_CALLING(stack_grow, "returned non-zero value");
         return 1;
     }
 
@@ -71,7 +74,7 @@ val_t stack_pop(Stack *stack)
 
     if (!stack->size) {
 
-        return (val_t) 0;
+        return 0;
     }
 
     return stack->data[--stack->size];
@@ -81,14 +84,13 @@ bool stack_ok(Stack *stack)
 {
     assert(stack != NULL);
 
-    return (stack->data != NULL) && (stack->size <= stack->capacity) &&  (stack->capacity);
+    return (stack->data != NULL) && (stack->size <= stack->capacity) && (stack->capacity);
 }
 
 void stack_delete(Stack **stack)
 {
-//  TODO define FREE macro
     assert(stack != NULL);
 
-    free((*stack)->data);
-    free(*stack);
+    FREE((*stack)->data);
+    FREE(*stack);
 }
