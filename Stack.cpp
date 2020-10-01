@@ -3,6 +3,17 @@
 #include <assert.h>
 #include <stdlib.h>
 
+const size_t CONSTRUCTION_CAPACITY = 32;
+
+const size_t GROW_COEFFICIENT = 2;
+
+struct Stack {
+    val_t *data;
+
+    size_t size;
+    size_t capacity;
+};
+
 Stack *stack_construct()
 {
     Stack *stack = (Stack *) calloc(1, sizeof(Stack));
