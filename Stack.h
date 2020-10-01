@@ -3,15 +3,7 @@
 
 typedef double val_t;
 
-const size_t CONSTRUCTION_CAPACITY = 32;
-const size_t GROW_COEFFICIENT = 2;
-
-struct Stack {
-    val_t *data;
-
-    size_t size;
-    size_t capacity;
-};
+struct Stack;
 
 /*!
  * @brief
