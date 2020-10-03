@@ -2,14 +2,14 @@
 #define STACK_H
 
 /*!
- * Defines the type of elements stored in the stack
- */
-typedef double val_t;
-
-/*!
  * Defines LIFO data structure
  */
 struct Stack;
+
+/*!
+ * Defines the floating point type of elements stored in the stack
+ */
+typedef double val_t;
 
 /*!
  * Allocates a Stack with non-zero capacity
@@ -37,7 +37,7 @@ int stack_push(Stack *stack, val_t val);
  *
  * @return the popped value
  *
- * @note Returns 0 in case the stack was empty
+ * @note Returns NAN in case the stack was empty
  */
 val_t stack_pop(Stack *stack);
 
@@ -51,19 +51,12 @@ val_t stack_pop(Stack *stack);
 int stack_shrink_to_fit(Stack *stack);
 
 /*!
- * Checks if stack is OK
- *
- * @param [in] stack pointer to Stack
- *
- * @return true if stack is OK, false otherwise
- */
-bool stack_ok(const Stack *stack);
-
-/*!
  * Frees the stack and sets in to a NULL pointer
  *
  * @param [in] stack address of pointer to Stack
  */
 void stack_destruct(Stack **stack);
+
+int stack_dump(Stack *stack);
 
 #endif /* STACK_H */
