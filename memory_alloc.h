@@ -1,8 +1,8 @@
 #ifndef MEMORY_ALLOC_H
 #define MEMORY_ALLOC_H
 
-#define FREE(ptr) do { \
-                      free(ptr); \
+#define FREE(ptr) do {              \
+                      free(ptr);    \
                       (ptr) = NULL; \
                   } while (0)
 
