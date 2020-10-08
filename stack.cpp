@@ -19,6 +19,7 @@ struct Stack {
     val_t *data;
     size_t size;
     size_t capacity;
+
     hash_sum_t hash_sum;
 };
 
