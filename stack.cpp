@@ -65,69 +65,6 @@ hash_sum_t stack_eval_hash_sum(const Stack *stack)
     return eval_hash_sum((const unsigned char *) stack, sizeof(Stack) - sizeof(hash_sum_t));
 }
 
-void struct_transaction_rollback(Stack **stack, Stack *stack_copy)
-{
-    assert(stack_copy != NULL);
-
-    delete_stack(stack);
-    *stack = stack_copy;
-}
-
-int struct_transaction(Stack **stack, transaction_status status)
-{
-    assert(stack != NULL);
-    assert(*stack != NULL);
-
-    static Stack *stack_copy = NULL;
-
-    switch (status) {
-        case BEGIN: {
-            if (stack_copy != NULL) {
-                ERROR_OCCURRED_IN_FUNC(struct_transaction, "started new transaction before ending previous");
-                return -1;
-            }
-
-            stack_copy = (Stack *) calloc_with_border_canaries(1, sizeof(Stack));
-
-            if (stack_copy == NULL) {
-                ERROR_OCCURRED_CALLING(calloc, "returned NULL");
-                return -1;
-            }
-
-            stack_copy->data = (val_t *) calloc_with_border_canaries((*stack)->capacity, sizeof(val_t));
-
-            if (stack_copy->data == NULL) {
-                ERROR_OCCURRED_CALLING(calloc, "returned NULL");
-                return -1;
-            }
-
-            stack_copy->size = (*stack)->size;
-            stack_copy->capacity = (*stack)->capacity;
-            stack_copy->hash_sum = stack_eval_hash_sum(stack_copy);
-
-            memcpy(stack_copy->data, (*stack)->data, (*stack)->capacity * sizeof(val_t));
-
-            return 0;
-        }
-        case END_SUCCESS: {
-            assert(stack_copy != NULL);
-
-            free(stack_copy);
-            stack_copy = NULL;
-
-            return 0;
-        }
-        case END_FAILURE: {
-            assert(stack_copy != NULL);
-
-            struct_transaction_rollback(stack, stack_copy);
-            stack_copy = NULL;
-
-            return 0;
-        }
-    }
-}
-
 bool stack_validate_data(const Stack *stack)
 {
     assert(stack != NULL);
@@ -159,7 +96,14 @@ StackError stack_error(const Stack *stack)
         return STACK_ERROR_WITH_DESCRIPTION(INVALID_HASH_SUM);
     }
 
-    if ((left_canary(stack->data) != CANARY_VALUE) || (right_canary(stack->data, stack->capacity * sizeof(val_t)) != CANARY_VALUE)) {
+    if ((left_canary(stack->data) != CANARY_VALUE)) {
+        return STACK_ERROR_WITH_DESCRIPTION(DEAD_DATA_CANARY);
+    }
+
+    canary_t y = left_canary(stack->data);
+    canary_t x = right_canary(stack->data, stack->capacity * sizeof(val_t));
+
+    if ((right_canary(stack->data, stack->capacity * sizeof(val_t)) != CANARY_VALUE)) {
         return STACK_ERROR_WITH_DESCRIPTION(DEAD_DATA_CANARY);
     }
 
@@ -258,6 +202,68 @@ void stack_verify(const Stack *stack)
     if (stackerror.code) {
         stack_dump(stack, &stackerror);
         abort();
+    }
+}
+
+void struct_transaction_rollback(Stack **stack, Stack *stack_copy)
+{
+    assert(stack_copy != NULL);
+
+    delete_stack(stack);
+    *stack = stack_copy;
+}
+
+int struct_transaction(Stack **stack, transaction_status status)
+{
+    assert(stack != NULL);
+    assert(*stack != NULL);
+
+    static Stack *stack_copy = NULL;
+
+    switch (status) {
+        case BEGIN: {
+            if (stack_copy != NULL) {
+                ERROR_OCCURRED_IN_FUNC(struct_transaction, "started new transaction before ending previous");
+                return -1;
+            }
+
+            stack_copy = (Stack *) calloc_with_border_canaries(1, sizeof(Stack));
+
+            if (stack_copy == NULL) {
+                ERROR_OCCURRED_CALLING(calloc, "returned NULL");
+                return -1;
+            }
+
+            stack_copy->data = (val_t *) calloc_with_border_canaries((*stack)->capacity, sizeof(val_t));
+
+            if (stack_copy->data == NULL) {
+                ERROR_OCCURRED_CALLING(calloc, "returned NULL");
+                return -1;
+            }
+
+            stack_copy->size = (*stack)->size;
+            stack_copy->capacity = (*stack)->capacity;
+            stack_copy->hash_sum = stack_eval_hash_sum(stack_copy);
+
+            memcpy(stack_copy->data, (*stack)->data, (*stack)->capacity * sizeof(val_t));
+
+            return 0;
+        }
+        case END_SUCCESS: {
+            assert(stack_copy != NULL);
+
+            delete_stack(&stack_copy);
+
+            return 0;
+        }
+        case END_FAILURE: {
+            assert(stack_copy != NULL);
+
+            struct_transaction_rollback(stack, stack_copy);
+            stack_copy = NULL;
+
+            return 0;
+        }
     }
 }
 
