@@ -1,11 +1,12 @@
 #include "stack.h"
 
+#include "canary.h"
 #include "error.h"
+#include "hash_sum.h"
 #include "memory_alloc.h"
-#include "utility.h"
 
 #include <assert.h>
-#include <math.h>
+#include <memory.h>
 #include <stdlib.h>
 
 const size_t CONSTRUCTION_CAPACITY = 1;
@@ -14,160 +15,324 @@ const double GROW_COEFFICIENT = 2.5;
 
 const double GROW_COEFFICIENT_IF_FAILURE = 1.5;
 
-enum Error {
-    VALID,
-    NULL_POINTER_TO_DATA,
-    SIZE_GR_THAN_CAPACITY,
-    CAPACITY_EQ_ZERO
-};
+typedef unsigned long long hash_sum_t;
 
 struct Stack {
     val_t *data;
     size_t size;
     size_t capacity;
-    Error error;
+
+    hash_sum_t hash_sum;
+};
+
+enum stack_error_code {
+    OK,
+    DEAD_STACK_CANARY,
+    DEAD_DATA_CANARY,
+    INVALID_HASH_SUM,
+    NULL_POINTER_TO_STACK,
+    NULL_POINTER_TO_DATA,
+    INVALID_DATA,
+    SIZE_GREATER_THAN_CAPACITY,
+    CAPACITY_EQUAL_ZERO
+};
+
+struct StackError {
+    stack_error_code code;
+    const char *description;
+};
+
+enum transaction_status {
+    BEGIN,
+    END_SUCCESS,
+    END_FAILURE
 };
 
 #ifndef NDEBUG
-#define VERIFY_STACK(stack) do {                         \
-                                if (stack_error(stack)) {\
-                                    stack_dump(stack);   \
-                                    abort();             \
-                                }                        \
-                            } while (0)
+#define VERIFY_STACK(stack) stack_verify(stack)
 
-#define VERIFY_STACK_RETURN(stack, val) do {                    \
-                                            VERIFY_STACK(stack);\
-                                            return val;         \
-                                        } while (0)
+#define VERIFY_STACK_AND_RETURN(stack, val) do {                     \
+                                                VERIFY_STACK(stack); \
+                                                return val;          \
+                                            } while (0)
 #else
-#define VERIFY_STACK(stack) ;
-#define VERIFY_STACK_RETURN(stack, val) return val
+#define VERIFY_STACK(stack)
+#define VERIFY_STACK_AND_RETURN(stack, val) return val
 #endif
 
-Stack *stack_construct()
+void struct_transaction_rollback(Stack *stack, Stack *stack_copy)
 {
-    assert(CONSTRUCTION_CAPACITY > 0);
+    assert(stack_copy != NULL);
 
-    Stack *stack = (Stack *) calloc(1, sizeof(Stack));
-
-    if (stack == NULL) {
-        ERROR_OCCURRED_CALLING(calloc, "returned NULL");
-        return NULL;
-    }
-
-    stack->data = (val_t *) calloc(CONSTRUCTION_CAPACITY, sizeof(val_t));
-    stack->capacity = CONSTRUCTION_CAPACITY;
-    stack->size = 0;
-    stack->error = VALID;
-
-    return stack;
+    delete_stack(&stack);
+    stack = stack_copy;
+    stack_copy = NULL;
 }
 
-int stack_error(Stack *stack)
+int struct_transaction(Stack *stack, transaction_status status)
 {
+    assert(stack != NULL);
+
+    static Stack *stack_copy = NULL;
+
+    switch (status) {
+        case BEGIN: {
+            if (stack_copy != NULL) {
+                ERROR_OCCURRED_IN_FUNC(struct_transaction, "started new transaction before ending previous");
+                return -1;
+            }
+
+            stack_copy = (Stack *) calloc(1, sizeof(Stack));
+
+            if (stack_copy == NULL) {
+                ERROR_OCCURRED_CALLING(calloc, "returned NULL");
+                return -1;
+            }
+
+            memcpy(stack_copy, stack, sizeof(Stack));
+
+            return 0;
+        }
+        case END_SUCCESS: {
+            assert(stack_copy != NULL);
+
+            delete_stack(&stack_copy);
+
+            return 0;
+        }
+        case END_FAILURE: {
+            assert(stack_copy != NULL);
+
+            struct_transaction_rollback(stack, stack_copy);
+
+            return 0;
+        }
+    }
+}
+
+hash_sum_t stack_eval_hash_sum(const Stack *stack)
+{
+    assert(stack);
+
+    return eval_hash_sum((const unsigned char *) stack, sizeof(Stack) - sizeof(hash_sum_t));
+}
+
+bool stack_validate_data(const Stack *stack)
+{
+    assert(stack != NULL);
+
+    for (size_t i = 0; i < stack->size; ++i) {
+        if (!isfinite(stack->data[i])) return false;
+    }
+
+    for (size_t i = stack->size; i < stack->capacity; ++i) {
+        if (isfinite(stack->data[i])) return false;
+    }
+
+    return true;
+}
+
+StackError stack_error(const Stack *stack)
+{
+#define STACK_ERROR_WITH_DESCRIPTION(error) {error, #error}
+
     if (stack == NULL) {
-        return -1;
+        return STACK_ERROR_WITH_DESCRIPTION(NULL_POINTER_TO_STACK);
+    }
+
+    if ((left_canary(stack) != CANARY_VALUE) || (right_canary(stack, sizeof(Stack)) != CANARY_VALUE)) {
+        return STACK_ERROR_WITH_DESCRIPTION(DEAD_STACK_CANARY);
+    }
+
+    if (stack->hash_sum != stack_eval_hash_sum(stack)) {
+        return STACK_ERROR_WITH_DESCRIPTION(INVALID_HASH_SUM);
+    }
+
+    if ((left_canary(stack->data) != CANARY_VALUE) || (right_canary(stack->data, sizeof(val_t)) != CANARY_VALUE)) {
+        return STACK_ERROR_WITH_DESCRIPTION(DEAD_DATA_CANARY);
     }
 
     if (stack->data == NULL) {
-        return stack->error = NULL_POINTER_TO_DATA;
+        return STACK_ERROR_WITH_DESCRIPTION(NULL_POINTER_TO_DATA);
+    }
+
+    if (!stack_validate_data(stack)) {
+        return STACK_ERROR_WITH_DESCRIPTION(INVALID_DATA);
     }
 
     if (stack->size > stack->capacity) {
-        return stack->error = SIZE_GR_THAN_CAPACITY;
+        return STACK_ERROR_WITH_DESCRIPTION(SIZE_GREATER_THAN_CAPACITY);
     }
 
     if (!stack->capacity) {
-        return stack->error = CAPACITY_EQ_ZERO;
+        return STACK_ERROR_WITH_DESCRIPTION(CAPACITY_EQUAL_ZERO);
     }
 
-    return stack->error;
+    return STACK_ERROR_WITH_DESCRIPTION(OK);
+
+#undef STACK_ERROR_WITH_DESCRIPTION
 }
 
-int stack_dump(Stack *stack)
+void stack_dump(const Stack *stack, const StackError *stackerror)
 {
-    if (stack == NULL) {
-        fprintf(stderr, "STACK_ERROR: NULL pointer to Stack\n"
-                        "%s [%p]\n", PARAM_NAME(stack), stack);
-        return 0;
-    }
+    assert(stackerror);
 
-    switch (stack->error) {
-        case VALID: {
-            fprintf(stderr, "STACK_ERROR: valid\n"
-                            "%s [%p]\n"
+    switch (stackerror->code) {
+        case OK: {
+            fprintf(stderr, "STACK_DUMP: status #%d, %s\n"
+                            "Stack [%p]\n"
                             "{\n"
                             "\tsize     = %zu\n"
                             "\tcapacity = %zu\n"
                             "\tdata [%p]\n"
-                            "\t{\n", PARAM_NAME(stack), stack, stack->size, stack->capacity, stack->data);
+                            "\t{\n", stackerror->code, stackerror->description, stack, stack->size, stack->capacity, stack->data);
             for (size_t i = 0; i < stack->size; ++i) fprintf(stderr, "\t\t[%zu] = %f\n", i, stack->data[i]);
             fprintf(stderr, "\t}\n"
                             "}\n");
-            return 0;
+            return;
         }
+        case DEAD_STACK_CANARY:
+        case INVALID_HASH_SUM:
+        case CAPACITY_EQUAL_ZERO:
         case NULL_POINTER_TO_DATA: {
-            fprintf(stderr, "STACK_ERROR: NULL pointer to data\n"
-                            "%s [%p]\n"
-                            "{\n"
-                            "\tsize     = %zu\n"
-                            "\tcapacity = %zu\n"
-                            "\tdata []\n"
-                            "}\n", PARAM_NAME(stack), stack, stack->size, stack->capacity, stack->data);
-            return 0;
-        }
-        case SIZE_GR_THAN_CAPACITY: {
-            fprintf(stderr, "STACK_ERROR: size is greater than capacity\n"
-                            "%s [%p]\n"
+            fprintf(stderr, "STACK_DUMP: status #%d, %s\n"
+                            "Stack [%p]\n"
                             "{\n"
                             "\tsize     = %zu\n"
                             "\tcapacity = %zu\n"
                             "\tdata [%p]\n"
-                            "\t{\n", PARAM_NAME(stack), stack, stack->size, stack->capacity, stack->data);
-            for (size_t i = 0; i < stack->capacity; ++i) fprintf(stderr, "\t\t[%10zu] = %f\n", i, stack->data[i]);
+                            "}\n", stackerror->code, stackerror->description, stack, stack->size, stack->capacity, stack->data);
+            return;
+        }
+        case NULL_POINTER_TO_STACK: {
+            fprintf(stderr, "STACK_DUMP: status #%d, %s\n"
+                            "Stack [%p]\n", stackerror->code, stackerror->description, stack);
+            return;
+        }
+        case DEAD_DATA_CANARY:
+        case INVALID_DATA: {
+            fprintf(stderr, "STACK_DUMP: status #%d, %s\n"
+                            "Stack [%p]\n"
+                            "{\n"
+                            "\tsize     = %zu\n"
+                            "\tcapacity = %zu\n"
+                            "\tdata [%p]\n"
+                            "\t{\n", stackerror->code, stackerror->description, stack, stack->size, stack->capacity, stack->data);
+            for (size_t i = 0; i < stack->size; ++i) fprintf(stderr, "\t\t[%zu] = %f\n", i, stack->data[i]);
             fprintf(stderr, "\t}\n"
                             "}\n");
-            return 0;
+            return;
         }
-        case CAPACITY_EQ_ZERO: {
-            fprintf(stderr, "STACK_ERROR: size is greater than capacity\n"
-                            "%s [%p]\n"
+        case SIZE_GREATER_THAN_CAPACITY: {
+            fprintf(stderr, "STACK_DUMP: status #%d, %s\n"
+                            "Stack [%p]\n"
                             "{\n"
                             "\tsize     = %zu\n"
                             "\tcapacity = %zu\n"
                             "\tdata [%p]\n"
-                            "}\n", PARAM_NAME(stack), stack, stack->size, stack->capacity, stack->data);
-            return 0;
+                            "\t{\n", stackerror->code, stackerror->description, stack, stack->size, stack->capacity, stack->data);
+            for (size_t i = 0; i < stack->size; ++i) fprintf(stderr, "\t\t*[%10zu] = %f\n", i, stack->data[i]);
+            for (size_t i = stack->size; i < stack->capacity; ++i) fprintf(stderr, "\t\t[%10zu] = %f\n", i, stack->data[i]);
+            fprintf(stderr, "\t}\n"
+                            "}\n");
+            return;
         }
     }
+}
+
+void stack_verify(const Stack *stack)
+{
+    StackError stackerror = stack_error(stack);
+
+    if (stackerror.code) {
+        stack_dump(stack, &stackerror);
+        abort();
+    }
+}
+
+void stack_poison_empty_data(Stack *stack)
+{
+    for (size_t i = stack->size; i < stack->capacity; ++i) {
+        stack->data[i] = STACK_POISON_VAL;
+    }
+}
+
+int stack_ctor(Stack *stack)
+{
+    assert(CONSTRUCTION_CAPACITY > 0);
+
+    stack->data = (val_t *) calloc_with_border_canaries(CONSTRUCTION_CAPACITY, sizeof(val_t));
+
+    if (stack->data == NULL) {
+        ERROR_OCCURRED_CALLING(calloc_with_border_canaries, "returned NULL");
+        return 1;
+    }
+
+    stack->capacity = CONSTRUCTION_CAPACITY;
+    stack->size = 0;
+    stack->hash_sum = stack_eval_hash_sum(stack);
+
+    stack_poison_empty_data(stack);
+
+    VERIFY_STACK_AND_RETURN(stack, 0);
+}
+
+Stack *new_stack()
+{
+    Stack *stack = (Stack *) calloc_with_border_canaries(1, sizeof(Stack));
+
+    if (stack == NULL) {
+        ERROR_OCCURRED_CALLING(calloc_with_border_canaries, "returned NULL");
+        return NULL;
+    }
+
+    if (stack_ctor(stack)) {
+        ERROR_OCCURRED_CALLING(stack_ctor, "returned non-zero value");
+        return NULL;
+    }
+
+    return stack;
 }
 
 int stack_grow(Stack *stack, double grow_coefficient)
 {
     VERIFY_STACK(stack);
+    assert(isfinite(grow_coefficient));
     assert((grow_coefficient == GROW_COEFFICIENT) || (grow_coefficient == GROW_COEFFICIENT_IF_FAILURE) || (grow_coefficient == 1));
 
+    if (struct_transaction(stack, BEGIN)) {
+        ERROR_OCCURRED_CALLING(struct_transaction, "failed to begin");
+        return 1;
+    }
+
     size_t new_capacity = (grow_coefficient > 1) ? stack->capacity * GROW_COEFFICIENT : stack->capacity + 1;
-    val_t *tmp = (val_t *) realloc(stack->data, new_capacity * sizeof(val_t));
+    val_t *tmp = (val_t *) realloc_with_border_canaries(stack->data, new_capacity * sizeof(val_t));
 
     if ((tmp == NULL) && (grow_coefficient == 1)) {
-        ERROR_OCCURRED_CALLING(realloc, "returned NULL");
+        ERROR_OCCURRED_CALLING(realloc_with_border_canaries, "returned NULL");
+
+        struct_transaction(stack, END_FAILURE);
         return 1;
     }
 
     if (tmp == NULL) {
         if (grow_coefficient == GROW_COEFFICIENT) {
-            VERIFY_STACK_RETURN(stack, stack_grow(stack, GROW_COEFFICIENT_IF_FAILURE));
+            struct_transaction(stack, END_SUCCESS);
+            VERIFY_STACK_AND_RETURN(stack, stack_grow(stack, GROW_COEFFICIENT_IF_FAILURE));
         } else {
-            VERIFY_STACK_RETURN(stack, stack_grow(stack, 1));
+            struct_transaction(stack, END_SUCCESS);
+            VERIFY_STACK_AND_RETURN(stack, stack_grow(stack, 1));
         }
     }
 
     stack->data = tmp;
     stack->capacity = new_capacity;
+    stack->hash_sum = stack_eval_hash_sum(stack);
 
-    VERIFY_STACK_RETURN(stack, 0);
+    stack_poison_empty_data(stack);
+
+    struct_transaction(stack, END_SUCCESS);
+    VERIFY_STACK_AND_RETURN(stack, 0);
 }
 
 int stack_push(Stack *stack, val_t val)
@@ -175,83 +340,118 @@ int stack_push(Stack *stack, val_t val)
     VERIFY_STACK(stack);
     assert(isfinite(val));
 
+    struct_transaction(stack, BEGIN);
+
     if (stack->size < stack->capacity) {
         stack->data[stack->size++] = val;
-        VERIFY_STACK_RETURN(stack, 0);
+        stack->hash_sum = stack_eval_hash_sum(stack);
+
+        struct_transaction(stack, END_SUCCESS);
+        VERIFY_STACK_AND_RETURN(stack, 0);
     }
 
     if (stack_grow(stack, GROW_COEFFICIENT)) {
         ERROR_OCCURRED_CALLING(stack_grow, "returned non-zero value");
-        VERIFY_STACK_RETURN(stack, 1);
+        struct_transaction(stack, END_FAILURE);
+        VERIFY_STACK_AND_RETURN(stack, 1);
     }
 
-    VERIFY_STACK_RETURN(stack, stack_push(stack, val));
+    struct_transaction(stack, END_SUCCESS);
+    VERIFY_STACK_AND_RETURN(stack, stack_push(stack, val));
 }
 
 int stack_shrink(Stack *stack)
 {
     VERIFY_STACK(stack);
 
-    const size_t shrinked_capacity = stack->capacity / (GROW_COEFFICIENT * GROW_COEFFICIENT);
+    struct_transaction(stack, BEGIN);
+
+    size_t shrinked_capacity = stack->capacity / (GROW_COEFFICIENT * GROW_COEFFICIENT);
 
     if (((stack->size) > shrinked_capacity) || (shrinked_capacity == 0)) {
-        VERIFY_STACK_RETURN(stack, 0);
+        struct_transaction(stack, END_SUCCESS);
+        VERIFY_STACK_AND_RETURN(stack, 0);
     }
 
-    val_t *tmp = (val_t *) realloc(stack->data, shrinked_capacity * sizeof(val_t));
+    val_t *tmp = (val_t *) realloc_with_border_canaries(stack->data, shrinked_capacity * sizeof(val_t));
 
     if (tmp == NULL) {
-        ERROR_OCCURRED_CALLING(realloc, "returned NULL");
-        VERIFY_STACK_RETURN(stack, 1);
+        ERROR_OCCURRED_CALLING(realloc_with_border_canaries, "returned NULL");
+        struct_transaction(stack, END_FAILURE);
+        VERIFY_STACK_AND_RETURN(stack, 1);
     }
 
-    printf("stack was shrinked: capacity changed from %zu to %zu\n", stack->capacity, shrinked_capacity);
+    printf("yay! stack was shrinked from capacity %zu to %zu\n", stack->capacity, shrinked_capacity);
 
     stack->data = tmp;
     stack->capacity = shrinked_capacity;
+    stack->hash_sum = stack_eval_hash_sum(stack);
 
-    VERIFY_STACK_RETURN(stack, 0);
+    struct_transaction(stack, END_SUCCESS);
+    VERIFY_STACK_AND_RETURN(stack, 0);
 }
 
-val_t stack_pop(Stack *stack)
+val_t stack_pop(Stack *stack, bool *error)
 {
     VERIFY_STACK(stack);
 
+    struct_transaction(stack, BEGIN);
+
     if (!stack->size) {
-        ERROR_OCCURRED("attempt to pop empty stack");
-        VERIFY_STACK_RETURN(stack, NAN);
+        *error = true;
+        struct_transaction(stack, END_FAILURE);
+        VERIFY_STACK_AND_RETURN(stack, STACK_POISON_VAL);
     }
 
     val_t top = stack->data[--stack->size];
+    stack->hash_sum = stack_eval_hash_sum(stack);
+    stack->data[stack->size] = STACK_POISON_VAL;
 
     if (stack_shrink(stack)) {
         ERROR_OCCURRED_CALLING(stack_shrink_to_fit, "returned non-zero value");
     }
 
-    VERIFY_STACK_RETURN(stack, top);
+    struct_transaction(stack, END_SUCCESS);
+    VERIFY_STACK_AND_RETURN(stack, top);
 }
 
 int stack_shrink_to_fit(Stack *stack)
 {
     VERIFY_STACK(stack);
 
-    val_t *tmp = (val_t *) realloc(stack->data, stack->size * sizeof(val_t));
+    struct_transaction(stack, BEGIN);
+
+    val_t *tmp = (val_t *) realloc_with_border_canaries(stack->data, stack->size * sizeof(val_t));
 
     if (tmp == NULL) {
-        ERROR_OCCURRED_CALLING(realloc, "returned NULL");
-        VERIFY_STACK_RETURN(stack, 1);
+        ERROR_OCCURRED_CALLING(realloc_with_border_canaries, "returned NULL");
+        struct_transaction(stack, END_FAILURE);
+        VERIFY_STACK_AND_RETURN(stack, 1);
     }
 
     stack->data = tmp;
     stack->capacity = stack->size;
+    stack->hash_sum = stack_eval_hash_sum(stack);
 
-    VERIFY_STACK_RETURN(stack, 0);
+    struct_transaction(stack, END_SUCCESS);
+    VERIFY_STACK_AND_RETURN(stack, 0);
 }
 
-void stack_destruct(Stack **stack)
+void stack_dtor(Stack *stack)
+{
+    VERIFY_STACK(stack);
+
+    FREE_WITH_CANARY_BORDER(stack->data);
+}
+
+void delete_stack(Stack **stack)
 {
     VERIFY_STACK(*stack);
 
-    FREE((*stack)->data);
-    FREE(*stack);
+    stack_dtor(*stack);
+
+    FREE_WITH_CANARY_BORDER(stack);
 }
+
+#undef VERIFY_STACK
+#undef VERIFY_STACK_AND_RETURN
