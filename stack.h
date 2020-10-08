@@ -1,6 +1,8 @@
 #ifndef STACK_H
 #define STACK_H
 
+#include "math.h"
+
 /*!
  * Defines LIFO data structure
  */
@@ -12,11 +14,16 @@ struct Stack;
 typedef double val_t;
 
 /*!
- * Allocates a Stack with non-zero capacity
- *
- * @return pointer to a newly allocated Stack
+ * Defines invalid stack value
  */
-Stack *stack_construct();
+const double STACK_POISON_VAL = NAN;
+
+/*!
+ * Dynamically allocates a Stack, calls the constructor and returns it
+ *
+ * @return pointer to Stack in case of success, NULL otherwise
+ */
+Stack *new_stack();
 
 /*!
  * Pushes val into stack
@@ -31,15 +38,16 @@ Stack *stack_construct();
 int stack_push(Stack *stack, val_t val);
 
 /*!
- * Pops a value from stack
+ * Pops a value from stack. Check error before using the returned value
  *
  * @param [in, out] stack pointer to Stack
+ * @param [in, out] error pointer to bool
  *
  * @return the popped value
  *
- * @note Returns NAN in case the stack was empty
+ * @note Returns STACK_POISON_VAL and sets error to true in case the stack was empty
  */
-val_t stack_pop(Stack *stack);
+val_t stack_pop(Stack *stack, bool *error);
 
 /*!
  * Shrinks stack to fit
@@ -55,8 +63,13 @@ int stack_shrink_to_fit(Stack *stack);
  *
  * @param [in] stack address of pointer to Stack
  */
-void stack_destruct(Stack **stack);
+void stack_dtor(Stack *stack);
 
-int stack_dump(Stack *stack);
+/*!
+ * Delete a stack returned by new_stack
+ *
+ * @param [in, out] stack address of pointer to Stack
+ */
+void delete_stack(Stack **stack);
 
 #endif /* STACK_H */
