@@ -28,6 +28,11 @@ void *realloc_with_border_canaries(void *ptr, size_t new_size)
         return NULL;
     }
 
+    canary_t *l = (canary_t *) buffer;
+    canary_t *r = (canary_t *) (buffer + CANARY_SIZE + new_size);
+
+    printf("l = %p, r = %p\n", l, r);
+
     *((canary_t *) buffer) = *((canary_t *) (buffer + CANARY_SIZE + new_size)) = CANARY_VALUE;
 
     return buffer + CANARY_SIZE;
