@@ -58,18 +58,25 @@ enum transaction_status {
 #define VERIFY_STACK_AND_RETURN(stack, val) return val
 #endif
 
-void struct_transaction_rollback(Stack *stack, Stack *stack_copy)
+hash_sum_t stack_eval_hash_sum(const Stack *stack)
+{
+    assert(stack);
+
+    return eval_hash_sum((const unsigned char *) stack, sizeof(Stack) - sizeof(hash_sum_t));
+}
+
+void struct_transaction_rollback(Stack **stack, Stack *stack_copy)
 {
     assert(stack_copy != NULL);
 
-    delete_stack(&stack);
-    stack = stack_copy;
-    stack_copy = NULL;
+    delete_stack(stack);
+    *stack = stack_copy;
 }
 
-int struct_transaction(Stack *stack, transaction_status status)
+int struct_transaction(Stack **stack, transaction_status status)
 {
     assert(stack != NULL);
+    assert(*stack != NULL);
 
     static Stack *stack_copy = NULL;
 
@@ -80,21 +87,33 @@ int struct_transaction(Stack *stack, transaction_status status)
                 return -1;
             }
 
-            stack_copy = (Stack *) calloc(1, sizeof(Stack));
+            stack_copy = (Stack *) calloc_with_border_canaries(1, sizeof(Stack));
 
             if (stack_copy == NULL) {
                 ERROR_OCCURRED_CALLING(calloc, "returned NULL");
                 return -1;
             }
 
-            memcpy(stack_copy, stack, sizeof(Stack));
+            stack_copy->data = (val_t *) calloc_with_border_canaries((*stack)->capacity, sizeof(val_t));
+
+            if (stack_copy->data == NULL) {
+                ERROR_OCCURRED_CALLING(calloc, "returned NULL");
+                return -1;
+            }
+
+            stack_copy->size = (*stack)->size;
+            stack_copy->capacity = (*stack)->capacity;
+            stack_copy->hash_sum = stack_eval_hash_sum(stack_copy);
+
+            memcpy(stack_copy->data, (*stack)->data, (*stack)->capacity * sizeof(val_t));
 
             return 0;
         }
         case END_SUCCESS: {
             assert(stack_copy != NULL);
 
-            delete_stack(&stack_copy);
+            free(stack_copy);
+            stack_copy = NULL;
 
             return 0;
         }
@@ -102,17 +121,11 @@ int struct_transaction(Stack *stack, transaction_status status)
             assert(stack_copy != NULL);
 
             struct_transaction_rollback(stack, stack_copy);
+            stack_copy = NULL;
 
             return 0;
         }
     }
-}
-
-hash_sum_t stack_eval_hash_sum(const Stack *stack)
-{
-    assert(stack);
-
-    return eval_hash_sum((const unsigned char *) stack, sizeof(Stack) - sizeof(hash_sum_t));
 }
 
 bool stack_validate_data(const Stack *stack)
@@ -146,7 +159,7 @@ StackError stack_error(const Stack *stack)
         return STACK_ERROR_WITH_DESCRIPTION(INVALID_HASH_SUM);
     }
 
-    if ((left_canary(stack->data) != CANARY_VALUE) || (right_canary(stack->data, sizeof(val_t)) != CANARY_VALUE)) {
+    if ((left_canary(stack->data) != CANARY_VALUE) || (right_canary(stack->data, stack->capacity * sizeof(val_t)) != CANARY_VALUE)) {
         return STACK_ERROR_WITH_DESCRIPTION(DEAD_DATA_CANARY);
     }
 
@@ -298,27 +311,18 @@ int stack_grow(Stack *stack, double grow_coefficient)
     assert(isfinite(grow_coefficient));
     assert((grow_coefficient == GROW_COEFFICIENT) || (grow_coefficient == GROW_COEFFICIENT_IF_FAILURE) || (grow_coefficient == 1));
 
-    if (struct_transaction(stack, BEGIN)) {
-        ERROR_OCCURRED_CALLING(struct_transaction, "failed to begin");
-        return 1;
-    }
-
     size_t new_capacity = (grow_coefficient > 1) ? stack->capacity * GROW_COEFFICIENT : stack->capacity + 1;
     val_t *tmp = (val_t *) realloc_with_border_canaries(stack->data, new_capacity * sizeof(val_t));
 
     if ((tmp == NULL) && (grow_coefficient == 1)) {
         ERROR_OCCURRED_CALLING(realloc_with_border_canaries, "returned NULL");
-
-        struct_transaction(stack, END_FAILURE);
         return 1;
     }
 
     if (tmp == NULL) {
         if (grow_coefficient == GROW_COEFFICIENT) {
-            struct_transaction(stack, END_SUCCESS);
             VERIFY_STACK_AND_RETURN(stack, stack_grow(stack, GROW_COEFFICIENT_IF_FAILURE));
         } else {
-            struct_transaction(stack, END_SUCCESS);
             VERIFY_STACK_AND_RETURN(stack, stack_grow(stack, 1));
         }
     }
@@ -329,7 +333,6 @@ int stack_grow(Stack *stack, double grow_coefficient)
 
     stack_poison_empty_data(stack);
 
-    struct_transaction(stack, END_SUCCESS);
     VERIFY_STACK_AND_RETURN(stack, 0);
 }
 
@@ -338,23 +341,26 @@ int stack_push(Stack *stack, val_t val)
     VERIFY_STACK(stack);
     assert(isfinite(val));
 
-    struct_transaction(stack, BEGIN);
+    if (struct_transaction(&stack, BEGIN)) {
+        ERROR_OCCURRED_CALLING(struct_transaction, "failed to begin");
+        return 1;
+    }
 
     if (stack->size < stack->capacity) {
         stack->data[stack->size++] = val;
         stack->hash_sum = stack_eval_hash_sum(stack);
 
-        struct_transaction(stack, END_SUCCESS);
+        struct_transaction(&stack, END_SUCCESS);
         VERIFY_STACK_AND_RETURN(stack, 0);
     }
 
     if (stack_grow(stack, GROW_COEFFICIENT)) {
         ERROR_OCCURRED_CALLING(stack_grow, "returned non-zero value");
-        struct_transaction(stack, END_FAILURE);
+        struct_transaction(&stack, END_FAILURE);
         VERIFY_STACK_AND_RETURN(stack, 1);
     }
 
-    struct_transaction(stack, END_SUCCESS);
+    struct_transaction(&stack, END_SUCCESS);
     VERIFY_STACK_AND_RETURN(stack, stack_push(stack, val));
 }
 
@@ -362,12 +368,15 @@ int stack_shrink(Stack *stack)
 {
     VERIFY_STACK(stack);
 
-    struct_transaction(stack, BEGIN);
+    if (struct_transaction(&stack, BEGIN)) {
+        ERROR_OCCURRED_CALLING(struct_transaction, "failed to begin");
+        return 1;
+    }
 
     size_t shrinked_capacity = stack->capacity / (GROW_COEFFICIENT * GROW_COEFFICIENT);
 
     if (((stack->size) > shrinked_capacity) || (shrinked_capacity == 0)) {
-        struct_transaction(stack, END_SUCCESS);
+        struct_transaction(&stack, END_SUCCESS);
         VERIFY_STACK_AND_RETURN(stack, 0);
     }
 
@@ -375,7 +384,7 @@ int stack_shrink(Stack *stack)
 
     if (tmp == NULL) {
         ERROR_OCCURRED_CALLING(realloc_with_border_canaries, "returned NULL");
-        struct_transaction(stack, END_FAILURE);
+        struct_transaction(&stack, END_FAILURE);
         VERIFY_STACK_AND_RETURN(stack, 1);
     }
 
@@ -385,7 +394,7 @@ int stack_shrink(Stack *stack)
     stack->capacity = shrinked_capacity;
     stack->hash_sum = stack_eval_hash_sum(stack);
 
-    struct_transaction(stack, END_SUCCESS);
+    struct_transaction(&stack, END_SUCCESS);
     VERIFY_STACK_AND_RETURN(stack, 0);
 }
 
@@ -393,23 +402,26 @@ val_t stack_pop(Stack *stack, bool *error)
 {
     VERIFY_STACK(stack);
 
-    struct_transaction(stack, BEGIN);
+    if (struct_transaction(&stack, BEGIN)) {
+        ERROR_OCCURRED_CALLING(struct_transaction, "failed to begin");
+        return 1;
+    }
 
     if (!stack->size) {
         *error = true;
-        struct_transaction(stack, END_FAILURE);
+        struct_transaction(&stack, END_FAILURE);
         VERIFY_STACK_AND_RETURN(stack, STACK_POISON_VAL);
     }
 
     val_t top = stack->data[--stack->size];
     stack->hash_sum = stack_eval_hash_sum(stack);
     stack->data[stack->size] = STACK_POISON_VAL;
+    struct_transaction(&stack, END_SUCCESS);
 
     if (stack_shrink(stack)) {
         ERROR_OCCURRED_CALLING(stack_shrink_to_fit, "returned non-zero value");
     }
 
-    struct_transaction(stack, END_SUCCESS);
     VERIFY_STACK_AND_RETURN(stack, top);
 }
 
@@ -417,13 +429,16 @@ int stack_shrink_to_fit(Stack *stack)
 {
     VERIFY_STACK(stack);
 
-    struct_transaction(stack, BEGIN);
+    if (struct_transaction(&stack, BEGIN)) {
+        ERROR_OCCURRED_CALLING(struct_transaction, "failed to begin");
+        return 1;
+    }
 
     val_t *tmp = (val_t *) realloc_with_border_canaries(stack->data, stack->size * sizeof(val_t));
 
     if (tmp == NULL) {
         ERROR_OCCURRED_CALLING(realloc_with_border_canaries, "returned NULL");
-        struct_transaction(stack, END_FAILURE);
+        struct_transaction(&stack, END_FAILURE);
         VERIFY_STACK_AND_RETURN(stack, 1);
     }
 
@@ -431,7 +446,7 @@ int stack_shrink_to_fit(Stack *stack)
     stack->capacity = stack->size;
     stack->hash_sum = stack_eval_hash_sum(stack);
 
-    struct_transaction(stack, END_SUCCESS);
+    struct_transaction(&stack, END_SUCCESS);
     VERIFY_STACK_AND_RETURN(stack, 0);
 }
 
@@ -448,7 +463,7 @@ void delete_stack(Stack **stack)
 
     stack_dtor(*stack);
 
-    FREE_WITH_CANARY_BORDER(stack);
+    FREE_WITH_CANARY_BORDER(*stack);
 }
 
 #undef VERIFY_STACK
