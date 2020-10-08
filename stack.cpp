@@ -15,13 +15,10 @@ const double GROW_COEFFICIENT = 2.5;
 
 const double GROW_COEFFICIENT_IF_FAILURE = 1.5;
 
-typedef unsigned long long hash_sum_t;
-
 struct Stack {
     val_t *data;
     size_t size;
     size_t capacity;
-
     hash_sum_t hash_sum;
 };
 
