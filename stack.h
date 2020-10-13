@@ -59,17 +59,17 @@ val_t stack_pop(Stack *stack, bool *error);
 int stack_shrink_to_fit(Stack *stack);
 
 /*!
- * Frees the stack and sets in to a NULL pointer
- *
- * @param [in] stack address of pointer to Stack
- */
-void stack_dtor(Stack *stack);
-
-/*!
- * Delete a stack returned by new_stack
+ * Delete stack returned by new_stack
  *
  * @param [in, out] stack address of pointer to Stack
  */
 void delete_stack(Stack **stack);
+
+/*!
+ * Prints stack to log file
+ *
+ * @param stack pointer to Stack
+ */
+void stack_print(const Stack *stack);
 
 #endif /* STACK_H */
