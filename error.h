@@ -1,14 +1,14 @@
 #ifndef ERROR_H
 #define ERROR_H
 
-#include "stdio.h"
+#include "log.h"
 
 #ifdef __clang__
-#define ERROR_OCCURRED_CALLING(func, msg) fprintf(stderr, "ERROR: %s %s at %s(%d):%s\n\n", #func, (msg), __FILE_NAME__, __LINE__, __func__)
-#define ERROR_OCCURRED_IN_FUNC(func, msg) fprintf(stderr, "ERROR: in %s: %s at %s(%d):%s\n\n", #func, (msg), __FILE_NAME__, __LINE__, __func__)
+#define ERROR_OCCURRED_CALLING(func, msg) logging("ERROR: %s %s at %s(%d):%s\n\n", #func, (msg), __FILE_NAME__, __LINE__, __func__)
+#define ERROR_OCCURRED_IN_FUNC(func, msg) logging("ERROR: in %s: %s at %s(%d):%s\n\n", #func, (msg), __FILE_NAME__, __LINE__, __func__)
 #else
-#define ERROR_OCCURRED_CALLING(func, msg) fprintf(stderr, "%s %s at %s(%d):%s\n\n", #func, (msg), __FILE__, __LINE__, __func__)
-#define ERROR_OCCURRED_IN_FUNC(msg) fprintf(stderr, "%s at %s(%d):%s\n\n", (msg), __FILE__, __LINE__, __func__)
+#define ERROR_OCCURRED_CALLING(func, msg) logging("%s %s at %s(%d):%s\n\n", #func, (msg), __FILE__, __LINE__, __func__)
+#define ERROR_OCCURRED_IN_FUNC(msg) logging("%s at %s(%d):%s\n\n", (msg), __FILE__, __LINE__, __func__)
 #endif
 
 #endif /* ERROR_H */
