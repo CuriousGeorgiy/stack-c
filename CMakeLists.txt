@@ -6,5 +6,5 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
 add_executable(stack)
 
-target_sources(stack PUBLIC main.cpp stack.cpp hash_sum.cpp memory_alloc.cpp canary.cpp)
+target_sources(stack PUBLIC main.cpp stack.cpp hash_sum.cpp memory_alloc.cpp canary.cpp log.cpp)
 target_include_directories(stack PUBLIC "${PROJECT_SOURCE_DIR}")
